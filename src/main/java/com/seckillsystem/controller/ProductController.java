@@ -5,6 +5,7 @@ import java.util.List;
 import com.seckillsystem.domain.entity.Product;
 import com.seckillsystem.repository.ProductRepository;
 
+import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
@@ -22,13 +23,13 @@ public class ProductController {
     ProductRepository productRepository;
 
     @GET
-    public List<Product> listAll() {
+    public Uni<List<Product>> listAll() {
         return productRepository.listAll();
     }
 
     @GET
     @Path("/{id}")
-    public Product getById(@PathParam("id") Long id){
+    public Uni<Product> getById(@PathParam("id") Long id) {
         return productRepository.findById(id);
     }
 }

@@ -2,9 +2,9 @@ package com.seckillsystem.controller;
 
 import java.util.Map;
 
-import com.seckillsystem.domain.entity.Order;
 import com.seckillsystem.service.SeckillService;
 
+import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.POST;
@@ -23,17 +23,15 @@ public class SeckillController {
     SeckillService seckillService;
 
     @POST
-    public Response executeSeckill(
+    public Uni<Response> executeSeckill(
             @QueryParam("userId") Long userId,
             @QueryParam("productId") Long productId) {
-        try {
-            Order order = seckillService.processSeckill(userId, productId);
-            return Response.ok(order).build();
-        } catch (RuntimeException e) {
-            String errorMsg = e.getMessage() != null ? e.getMessage() : "發生未知錯誤";
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(Map.of("error", errorMsg))
-                    .build();
-        }
+        return seckillService.processSeckill(userId, productId).onItem().transform(order -> Response.ok(order).build())
+                .onFailure().recoverWithItem(e -> {
+                    String errorMsg = e.getMessage() != null ? e.getMessage() : "發生未知錯誤";
+                    return Response.status(Response.Status.BAD_REQUEST)
+                            .entity(Map.of("error", errorMsg))
+                            .build();
+                });
     }
 }

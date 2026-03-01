@@ -13,6 +13,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.NamedQuery;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
@@ -20,6 +21,7 @@ import jakarta.persistence.UniqueConstraint;
 @Table(name = "orders", uniqueConstraints = {
     @UniqueConstraint(columnNames = { "user_id", "product_id" })
 })
+@NamedQuery(name = "Order.allWithProduct", query = "from Order o left join fetch o.product")
 @Schema(description = "訂單實體")
 public class Order extends BaseEntity {
 
