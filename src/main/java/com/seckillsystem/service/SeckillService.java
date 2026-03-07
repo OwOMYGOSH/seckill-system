@@ -8,15 +8,17 @@ import com.seckillsystem.domain.entity.Product;
 import com.seckillsystem.repository.OrderRepository;
 import com.seckillsystem.repository.ProductRepository;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.logging.Log;
 import io.quarkus.redis.datasource.ReactiveRedisDataSource;
 import io.quarkus.redis.datasource.set.ReactiveSetCommands;
 import io.quarkus.redis.datasource.value.ReactiveValueCommands;
 import io.smallrye.mutiny.Uni;
+import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import jakarta.persistence.OptimisticLockException;
 
 @ApplicationScoped
 public class SeckillService {
@@ -29,6 +31,12 @@ public class SeckillService {
 
     @Inject
     ReactiveRedisDataSource reactiveRedisDataSource;
+
+    @Inject
+    MeterRegistry registry;
+
+    private Counter successCounter;
+    private Counter soldOutCounter;
 
     public Uni<Order> processSeckill(Long userId, Long productId) {
         LocalDateTime now = LocalDateTime.now();
@@ -47,14 +55,14 @@ public class SeckillService {
 
             return countCommands.decrby("seckill:stock:" + productId, 1).onItem().transformToUni(remain -> {
                 if (remain < 0) {
-                    // 🔹 處理「售罄」：手動補回 Redis，但不拋出會被外層回放的 Exception
+                    soldOutCounter.increment();
+                    // 處理「售罄」：補回 Redis
                     return Uni.combine().all().unis(
                             userSetCommands.srem(buyersKey, userId),
                             countCommands.incrby("seckill:stock:" + productId, 1)).discardItems()
                             .replaceWith(Uni.createFrom().failure(new RuntimeException("商品已售罄")));
                 }
 
-                // 3. 符合資格與庫存後，才進入 DB 事務
                 return Panache.withTransaction(() -> productRepository.findById(productId)
                         .onItem().ifNull().failWith(new RuntimeException("商品不存在"))
                         .onItem().transformToUni(product -> {
@@ -62,14 +70,19 @@ public class SeckillService {
                                 return Uni.createFrom().failure(new RuntimeException("秒殺尚未開始"));
                             if (now.isAfter(product.endTime))
                                 return Uni.createFrom().failure(new RuntimeException("秒殺已經結束"));
-                            if (product.stockAvailable <= 0)
-                                return Uni.createFrom().failure(new RuntimeException("商品已售罄"));
 
-                            product.stockAvailable--;
-                            return createOrder(userId, product);
+                            return productRepository.decreaseStock(productId)
+                                    .onItem().transformToUni(updatedRows -> {
+                                        if (updatedRows == 0) {
+                                            return Uni.createFrom().failure(new RuntimeException("商品已售罄 (DB)"));
+                                        }
+                                        // 成功扣減資料庫，才建立訂單
+                                        return createOrder(userId, product);
+                                    });
                         }))
-                        .onFailure(e -> !e.getMessage().equals("商品已售罄")).call(err -> {
-                            // 🔹 只有在非「預計中的售罄」出錯時(如DB掛掉)，才需要補回 Redis
+                        .onFailure(e -> !e.getMessage().equals("商品已售罄") && !e.getMessage().equals("商品已售罄 (DB)"))
+                        .call(err -> {
+                            // 只有在非「預計中的售罄」出錯時(如DB掛掉)，才需要補回 Redis
                             Log.error("❌ 系統異常或資料庫衝突，執行 Redis 回滾。錯誤原因: " + err.getMessage());
                             return Uni.combine().all().unis(
                                     userSetCommands.srem(buyersKey, userId),
@@ -77,14 +90,11 @@ public class SeckillService {
                         });
             });
         }).onFailure().transform(e -> {
-            if (e instanceof OptimisticLockException)
-                return new RuntimeException("目前搶購太火熱了! 請稍後再試");
             String msg = e.getMessage() != null ? e.getMessage() : "";
             if (msg.contains("ConstraintViolation") || msg.contains("duplicate key"))
                 return new RuntimeException("您已經購買過此商品，每人限購一份");
             return e;
         });
-
     }
 
     // 建立訂單
@@ -96,6 +106,14 @@ public class SeckillService {
         order.price = product.seckillPrice;
         order.status = OrderStatus.SUCCESS;
 
-        return orderRepository.persist(order).replaceWith(order);
+        return orderRepository.persist(order)
+                .invoke(() -> successCounter.increment())
+                .replaceWith(order);
+    }
+
+    @PostConstruct
+    void init() {
+        successCounter = registry.counter("seckill.orders.success", "type", "iphone 17 pro");
+        soldOutCounter = registry.counter("seckill.orders.soldout", "type", "iphone 17 pro");
     }
 }

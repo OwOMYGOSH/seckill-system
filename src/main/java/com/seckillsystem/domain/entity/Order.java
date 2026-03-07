@@ -6,22 +6,16 @@ import org.eclipse.microprofile.openapi.annotations.media.Schema;
 
 import com.seckillsystem.domain.OrderStatus;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.FetchType;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
-import jakarta.persistence.NamedQuery;
-import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.*;
 
 @Entity
 @Table(name = "orders", uniqueConstraints = {
     @UniqueConstraint(columnNames = { "user_id", "product_id" })
 })
-@NamedQuery(name = "Order.allWithProduct", query = "from Order o left join fetch o.product")
+@NamedQueries({
+    @NamedQuery(name = "Order.allWithProduct", query = "from Order o left join fetch o.product"),
+    @NamedQuery(name = "Order.findExpired", query = "from Order o left join fetch o.product where o.status = ?1 and o.createdAt < ?2")
+})
 @Schema(description = "訂單實體")
 public class Order extends BaseEntity {
 
