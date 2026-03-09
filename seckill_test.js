@@ -20,7 +20,7 @@ export const options = {
 export default function () {
   // 🔹 userId 必須是純數字 (Java Long)，加上隨機偏移量防止重複購買
   const userId = __VU + Math.floor(Math.random() * 1000000);
-  const productId = 52; 
+  const productId = 1; 
 
   // 🔹 模擬不同的 IP，讓 RateLimiterFilter 放行
   const params = {
@@ -29,8 +29,19 @@ export default function () {
     },
   };
 
-  // 🔹 執行 POST 請求
-  const res = http.post(`http://localhost:8080/api/seckill?userId=${userId}&productId=${productId}`, null, params);
+  // 🛡️ 第一步：獲取秒殺路徑 Token (導師預留，請確保後端有此接口)
+  const pathRes = http.get(`http://localhost:8080/api/seckill/get-path?userId=${userId}&productId=${productId}`, params);
+  
+  if (pathRes.status !== 200) {
+    console.log(`❌ [虛擬用戶 ${__VU}] 無法獲取搶購路徑: ${pathRes.body}`);
+    return;
+  }
+
+  const pathToken = JSON.parse(pathRes.body).path;
+  // const pathToken = zzz;
+
+  // 🛡️ 第二步：執行 POST 搶購請求 (帶著 Token)
+  const res = http.post(`http://localhost:8080/api/seckill?userId=${userId}&productId=${productId}&pathToken=${pathToken}`, null, params);
 
   // 🔹 增加更詳細的 Console Log 來診斷
   if (res.status === 200) {
